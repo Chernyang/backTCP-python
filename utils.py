@@ -25,6 +25,26 @@ LOG_STR_MAPPING = {
 log_level = LOG_WARNING
 
 
+def validate_log_level(level):
+    try:
+        level = int(level)
+        if 0 <= level <= LOG_ERROR:
+            return level
+    except Exception:
+        pass
+
+    if isinstance(level, str):
+        try:
+            return LOG_STR_MAPPING[level.lower()]
+        except KeyError:
+            raise ValueError(f"Invalid log level {level!r}") from None
+
+
+def set_log_level(level):
+    global log_level
+    log_level = validate_log_level(level)
+
+
 def log(level, *args):
     if not isinstance(level, int):
         try:
@@ -33,5 +53,5 @@ def log(level, *args):
             raise ValueError(f"Unexpected logging level {level!r}") from None
     if level < log_level:
         return  # Discard unwanted logs
-    s = "{} {}".format(LOG_PREFIX[level], " ".join(map(args, str)))
+    s = "{} {}".format(LOG_PREFIX[level], " ".join(map(str, args)))
     print(s, file=sys.stderr)

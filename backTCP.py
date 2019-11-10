@@ -26,12 +26,27 @@ class BTcpConnection:
             raise ValueError(f"Unexpected mode {mode}")
 
     def __del__(self):
+        self.close()
+
+    def close(self):
+        try:
+            self.conn.close()
+        except Exception:
+            pass
         try:
             self.sock.close()
         except Exception:
             pass
+        # set them to None so other code knows
+        self.conn = None
+        self.sock = None
+
+    def settimeout(self, timeout):
+        self.sock.settimeout(timeout)
 
     def send(self, packet):
+        if packet is None:
+            packet = b''
         self.conn.sendall(bytes(packet))
 
     def recv(self):
@@ -67,16 +82,27 @@ class BTcpPacket:
 
     @staticmethod
     def from_bytes(data):
+        if not data:
+            return None
         return BTcpPacket(
             sport=data[0], dport=data[1], seq=data[2], ack=data[3],
             data_off=data[4], win_size=data[5], flag=data[6], data=data[7:]
         )
 
+    def __repr__(self):
+        if len(self.data) > 1:
+            s = f"<{len(self.data)} bytes>"
+        elif len(self.data) == 0:
+            s = "<empty>"
+        else:
+            s = "<1 byte>"
+        return f"BTcpPacket(seq={self.seq}, ack={self.ack}, win_size={self.win_size}, flag={self.flag}, data={s})"
+
 
 def send(data, addr, port):
     conn = BTcpConnection('send', addr, port)
 
-    chunks = [data[x * 64:x * 64 + 64] for x in range(len(data) // 64 - 1)]
+    chunks = [data[x * 64:x * 64 + 64] for x in range((len(data) - 1) // 64 + 1)]
     packets = [BTcpPacket(seq=i & 0xFF, data_off=7, data=chunk) for i, chunk in enumerate(chunks)]
 
     # TODO: "data" is a bytes object
@@ -106,12 +132,12 @@ def recv(addr, port):
     # TODO: Assemble received binary data into `data` variable.
     #       Make sure you're handling disorder and timeouts properly
 
-    try:
-        while True:
-            p = conn.recv()
-            data += p.data
-    except Exception:
-        pass
+    conn.settimeout(0.010)  # 10ms timeout
+    while True:
+        p = conn.recv()
+        if p is None:  # No more packets
+            break
+        data += p.data
 
     # End of your own code
 
