@@ -1,5 +1,7 @@
 import os
 import socket
+import time
+import threading
 
 from utils import log
 
@@ -53,7 +55,6 @@ class BTcpConnection:
         return BTcpPacket.from_bytes(self.conn.recv(7 + 64))
 
 
-
 class BTcpPacket:
     def __init__(self, sport=0, dport=0, seq=0, ack=0, data_off=0, win_size=0, flag=0, data=b""):
         self.sport = sport
@@ -99,6 +100,20 @@ class BTcpPacket:
         return f"BTcpPacket(seq={self.seq}, ack={self.ack}, win_size={self.win_size}, flag={self.flag}, data={s})"
 
 
+def sender_recv(conn, nextseqnum, length, List):
+    while (List[0] < length):
+        s = conn.recv()
+        # print("s.ack: " + str(s.ack))
+        if (s and s.ack == List[0] & 0xFF):
+            List[0] = List[0] + 1
+            if (List[0] == nextseqnum):
+                # Window is empty
+                List[2] = 0
+            else:
+                List[1] = time.time()
+                List[2] = 1
+
+
 def send(data, addr, port):
     conn = BTcpConnection('send', addr, port)
 
@@ -111,10 +126,24 @@ def send(data, addr, port):
     #          > conn.send(p)
 
     # TODO: Delete the following code and add your own
-
-    for p in packets:
-        conn.send(p)
-
+    nextseqnum = 0
+    List = [0, 0, 0]    # List[0] is base, List[1] is t, List[2] is timer
+    thr = threading.Thread(target=sender_recv, args=(conn, nextseqnum, len(packets), List))
+    thr.start()
+    while (List[0] < len(packets)):
+        if (nextseqnum < List[0] + 8 and nextseqnum < len(packets)):
+            conn.send(packets[nextseqnum])
+            if (List[0] == nextseqnum):
+                List[1] = time.time()  # start timer
+                List[2] = 1
+            nextseqnum += 1
+        if (time.time() - List[1] >= 0.010 and List[2] == 1):
+            # timeout
+            for i in range(List[0], nextseqnum):
+                packets[i].flag = 1
+            nextseqnum = List[0]
+            List[2] = 0
+    conn.close()
     # End of your own code
     return
 
@@ -131,14 +160,26 @@ def recv(addr, port):
 
     # TODO: Assemble received binary data into `data` variable.
     #       Make sure you're handling disorder and timeouts properly
-
-    conn.settimeout(0.010)  # 10ms timeout
+    expectedseqnum = 0
+    ackpkt = BTcpPacket(ack=255, data=b"nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn")
     while True:
         p = conn.recv()
-        if p is None:  # No more packets
+        if (p is None):
             break
-        data += p.data
+        if (p.seq == expectedseqnum):
+            data += p.data
+            ackpkt = BTcpPacket(ack=expectedseqnum, data=b"nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn")
+            conn.send(ackpkt)
+            expectedseqnum = (expectedseqnum + 1) & 0xFF
+        else:
+            conn.send(ackpkt)
+
+    # while True:
+    #     p = conn.recv()
+    #     if p is None:  # No more packets
+    #         break
+    #     data += p.data
 
     # End of your own code
-
+    conn.close()
     return data
